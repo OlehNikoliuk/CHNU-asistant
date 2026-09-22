@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="uk" prefix="og: https://ogp.me/ns#">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Навчально-науковий інститут фізико-технічних та комп'ютерних наук - Чернівецький національний університет</title>
+    <meta name="description" content="Головна сторінка навчально-наукового інституту фізико-технічних та комп'ютерних наук" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ptcsi.chnu.edu.ua/" />
+    <meta property="og:title" content="Навчально-науковий інститут фізико-технічних та комп'ютерних наук" />
+    <meta property="og:description" content="Головна сторінка ННІФТКН ЧНУ імені Юрія Федьковича" />
+    <meta property="og:site_name" content="ННІФТКН ЧНУ" />
+
+    <link rel="preconnect" href="https://media.chnu.edu.ua">
+    <link rel="stylesheet" type="text/css" href="https://media.chnu.edu.ua/client/bundle.css?v=20260421" />
+
+    <style>
+        .submenu { opacity: 0; }
+        a.skip-to-main-content-link { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+        a.skip-to-main-content-link:focus { height: auto; position: static; width: auto; }
+
+        /* Floating Button помічника */
+        .ai-assistant-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, #1c355e 0%, #8b1820 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 25px rgba(28, 53, 94, 0.45);
+            cursor: pointer;
+            z-index: 99999;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 2px solid #ffffff;
+        }
+        .ai-assistant-btn:hover { transform: scale(1.08) translateY(-3px); }
+        .ai-assistant-btn svg { width: 32px; height: 32px; fill: #ffffff; }
+        .ai-assistant-badge {
+            position: absolute;
+            top: -3px;
+            right: -3px;
+            background: #f8c200;
+            color: #122442;
+            font-size: 10px;
+            font-weight: 900;
+            padding: 3px 6px;
+            border-radius: 10px;
+            border: 2px solid #ffffff;
+        }
+
+        /* Модальне вікно асистента */
+        .ai-chat-modal {
+            position: fixed;
+            bottom: 105px;
+            right: 30px;
+            width: 420px;
+            max-width: calc(100vw - 40px);
+            height: 560px;
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 16px 45px rgba(0, 0, 0, 0.25);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 100000;
+            border: 1px solid #cbd5e1;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .ai-chat-modal.active { display: flex; }
+
+        .ai-chat-header {
+            background: #1c355e;
+            color: #ffffff;
+            padding: 16px 18px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 3px solid #8b1820;
+        }
+        .ai-chat-header-info { display: flex; align-items: center; gap: 12px; }
+        .ai-avatar-icon {
+            width: 38px;
+            height: 38px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ai-avatar-icon svg { width: 22px; height: 22px; fill: #f8c200; }
+        .ai-chat-header-info h4 { margin: 0; font-size: 15px; font-weight: 700; color: #fff; }
+        .ai-chat-header-info p { margin: 0; font-size: 11px; color: #94a3b8; }
+        .ai-btn-close { background: transparent; border: none; cursor: pointer; padding: 4px; display: flex; }
+        .ai-btn-close svg { width: 18px; height: 18px; fill: #fff; opacity: 0.8; }
+        .ai-btn-close:hover svg { opacity: 1; }
+
+        .ai-chat-body {
+            flex: 1;
+            padding: 16px;
+            background: #f8fafc;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .ai-msg-bubble {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            padding: 12px 14px;
+            border-radius: 14px 14px 14px 3px;
+            font-size: 13px;
+            line-height: 1.45;
+            color: #1e293b;
+        }
+        .ai-quick-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+        .ai-quick-tag-btn {
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: #1c355e;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .ai-quick-tag-btn:hover { background: #1c355e; color: #ffffff; border-color: #1c355e; }
+
+        .ai-chat-footer {
+            padding: 12px 14px;
+            background: #ffffff;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .ai-chat-input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 20px;
+            font-size: 13px;
+            outline: none;
+        }
+        .ai-chat-input:focus { border-color: #1c355e; }
+        .ai-btn-send {
+            background: #1c355e;
+            border: none;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ai-btn-send:hover { background: #8b1820; }
+        .ai-btn-send svg { width: 16px; height: 16px; fill: #ffffff; }
+    </style>
+</head>
+<body data-is-live-mode="True" data-gtm-id="GTM-W7NKBCR" data-id="9b537bcc-b085-4530-9591-9045b359d37a" data-policy-domain=".chnu.edu.ua">
+    <a href="#main" class="skip-to-main-content-link">Перейти до основного вмісту</a>
+
+    <header class="header menu-sticky" data-menu-sticky data-nosnippet>
+        <div class="header-topbar-area flex-2-columns-8-4 has-languages">
+            <div class="flex-item wide-width no-margin topbar-contact-wrapper">
+                <ul class="topbar-contact">
+                    <li>
+                        <span class="iconify-icon icon--fa-regular icon--fa-regular--envelope vertical-align-middle"></span>
+                        <a href="mailto:iftcs@chnu.edu.ua"><span>iftcs@chnu.edu.ua</span></a>
+                    </li>
+                    <li>
+                        <span class="iconify-icon icon--fa-solid icon--fa-solid--map-marker-alt"></span>
+                        м. Чернівці, вул. Сторожинецька, 101 (Корпус №9)
+                    </li>
+                </ul>
+            </div>
+            <div class="flex-item no-margin text-align-right">
+                <ul class="header-topbar-right">
+                    <li class="header-languages">
+                        <ul>
+                            <li><a href="https://ptcsi.chnu.edu.ua/en/" title="English" data-language-link="en" hreflang="en">eng</a></li>
+                            <li><a class="active-language" href="https://ptcsi.chnu.edu.ua/" title="Українська" data-language-link="uk" hreflang="uk">ukr</a></li>
+                        </ul>
+                    </li>
+                    <li class="header-social-links">
+                        <ul>
+                            <li><a href="https://www.youtube.com/channel/UCy-HnoBQYMCtHcg2st2G7ZQ" title="YouTube" target="_blank" rel="noopener"><span class="iconify-icon footer-social-link-icon icon--fa-brands icon--fa-brands--youtube"></span></a></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <nav class="navbar">
+            <section class="navbar-left">
+                <a href="/" title="ННІФТКН ЧНУ">
+                    <picture>
+                        <source media="(prefers-color-scheme: dark)" srcset="https://media.chnu.edu.ua/media/bs4ku4iy/logo-chnu-footer.svg" width="200" height="60" />
+                        <img class="institution-logo" alt="ННІФТКН" src="https://media.chnu.edu.ua/media/ujunhcye/logo-chnu-header.svg" height="60" loading="lazy" width="200">
+                    </picture>
+                </a>
+            </section>
+            <section class="navbar-center">
+                <span class="overlay" data-overlay></span>
+                <div class="menu" data-menu>
+                    <ul class="menu-inner" role="menubar" tabindex="0" data-menu-bar>
+                        <li role="none" class="menu-item"><a role="menuitem" class="menu-link" href="/" target="_self" rel="dofollow">Головна</a></li>
+                        <li role="none" class="menu-item"><a role="menuitem" class="menu-link" href="/pro-instytut/administratsiia/" target="_self">Про інститут</a></li>
+                        <li role="none" class="menu-item"><a role="menuitem" class="menu-link" href="/studentu/rozklad-zaniat-ta-zalikovo-ekzamenatsiinykh-sesii/" target="_self">Студенту</a></li>
+                        <li role="none" class="menu-item"><a role="menuitem" class="menu-link" href="/abituriientu/spetsialnosti-ta-osvitni-prohramy-bakalavrat/" target="_self">Абітурієнту</a></li>
+                        <li role="none" class="menu-item"><a role="menuitem" class="menu-link" href="/novyny/zahalni-novyny/" target="_self">Новини</a></li>
+                    </ul>
+                </div>
+            </section>
+        </nav>
+    </header>
+
+    <main id="main">
+        <section class="splide home-swiper-container-flex">
+            <div class="splide__track">
+                <ul class="splide__list">
+                    <li class="splide__slide home-slide-flex">
+                        <picture class="home-slide-image">
+                            <img src="https://media.chnu.edu.ua/media/dbhi5hgt/light-_wide_banner_202604092139.png?width=1920&amp;height=832&amp;format=webp&amp;quality=80" alt="ННІФТКН" loading="eager" width="1920" height="832" style="width: 100%; height: auto;">
+                        </picture>
+                        <div class="home-slide-text">
+                            <h1 class="banner-title-flex white-color-with-shadow">НАВЧАЛЬНО-НАУКОВИЙ ІНСТИТУТ ФІЗИКО-ТЕХНІЧНИХ ТА КОМП'ЮТЕРНИХ НАУК</h1>
+                            <div class="desc-flex white-color-with-shadow">Чернівецького національного університету імені Юрія Федьковича</div>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="flex-container flex-2-columns-8-4">
+            <div class="flex-item wide-width flex-home-about-institution-part">
+                <div class="h5 primary-color-text">Про інститут</div>
+                <div class="h3">Навчально-науковий інститут фізико-технічних та комп’ютерних наук запрошує на навчання</div>
+                <p>ННІФТКН – це провідний підрозділ ЧНУ, де формуються лідери у сфері програмування, інфокомунікацій, мікроелектроніки та метрології. Тут поєднуються класична академічна школа та сучасні ІТ-технології.</p>
+                <div class="sign-part" style="display: flex; align-items: center; gap: 15px; margin-top: 20px;">
+                    <img src="https://media.chnu.edu.ua/media/1ynd1frs/shpatar.jpg?width=110&height=110&format=webp&quality=80" alt="Шпатар Петро Михайлович" style="border-radius: 50%;" width="90" height="90">
+                    <div>
+                        <div style="font-weight: 700; color: #1c355e;">Шпатар Петро Михайлович</div>
+                        <div style="font-size: 13px; color: #64748b;">Директор Навчально-наукового інституту фізико-технічних та комп’ютерних наук</div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex-item flex-home-latest-news-or-events-right">
+                <div class="title" style="font-weight: 700; margin-bottom: 15px;">Останні новини інституту</div>
+                <ul class="display-flex flex-direction-column" style="list-style: none; padding: 0;">
+                    <li style="padding: 10px 0; border-bottom: 1px solid #e2e8f0;">
+                        <span style="font-weight: 600; color: #1c355e;">Наскрізна підготовка фахівців з метрології:</span> співпраця кафедри кореляційної оптики та Чернівецької філії ДП «ІВАНО-ФРАНКІВСЬКСТАНДАРТМЕТРОЛОГІЯ».
+                    </li>
+                    <li style="padding: 10px 0; border-bottom: 1px solid #e2e8f0;">
+                        <span style="font-weight: 600; color: #1c355e;">Практика студентів ННІФТКН:</span> досвід, що формує майбутніх фахівців у галузі інфокомунікацій та вимірювальних систем.
+                    </li>
+                </ul>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer" data-nosnippet>
+        <div class="footer-bottom" style="background: #1c355e; color: #fff; padding: 25px 5%; display: flex; justify-content: space-between; align-items: center;">
+            <div>&copy; 2026 Навчально-науковий інститут фізико-технічних та комп'ютерних наук ЧНУ</div>
+            <div>вул. Сторожинецька, 101, Корпус №9 | iftcs@chnu.edu.ua</div>
+        </div>
+    </footer>
+
+    <!-- КНОПКА ВІДЖЕТА АСИСТЕНТА -->
+    <div class="ai-assistant-btn" onclick="toggleAiAssistant()" title="AI Навігатор ЧНУ">
+        <svg viewBox="0 0 24 24">
+            <path d="M12 1a9 9 0 0 0-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2a7 7 0 0 1 14 0v2h-4v8h4c.55 0 1-.45 1-1v-3.28A8.995 8.995 0 0 0 12 1zm-5 13H5v-2h2v2zm12 0h-2v-2h2v2zm-7 5.91c-2.79-.47-5-2.87-5-5.91h2c0 2.21 1.79 4 4 4v1.91z"/>
+            <circle cx="12" cy="11" r="3"/>
+        </svg>
+        <span class="ai-assistant-badge">AI</span>
+    </div>
+
+    <!-- МОДАЛЬНЕ ВІКНО АСИСТЕНТА -->
+    <div class="ai-chat-modal" id="aiAssistantModal">
+        <div class="ai-chat-header">
+            <div class="ai-chat-header-info">
+                <div class="ai-avatar-icon">
+                    <svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 1 0 5 5 5 5 0 0 0-5-5zm0 8a3 3 0 1 1 3-3 3 3 0 0 1-3 3zm9 11v-1a7 7 0 0 0-14 0v1z"/></svg>
+                </div>
+                <div>
+                    <h4>AI Навігатор ННІФТКН</h4>
+                    <p>Підключено до бази знань інституту</p>
+                </div>
+            </div>
+            <button class="ai-btn-close" onclick="toggleAiAssistant()">
+                <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+        </div>
+
+        <div class="ai-chat-body" id="aiChatBody">
+            <div class="ai-msg-bubble">
+                Вітаю! Я інтелектуальний помічник інституту. Звертаюсь до живої бази розкладу ННІФТКН: можу знайти графік викладача за будь-який день або надати загальні дані.
+            </div>
+            <div class="ai-quick-tags">
+                <button class="ai-quick-tag-btn" onclick="quickFill('Я Рябий Павло Анатолійович, який в мене завтра розклад')">👨‍🏫 Рябий (завтра)</button>
+                <button class="ai-quick-tag-btn" onclick="quickFill('який розклад у Рябого у вівторок?')">📅 Рябий (вівторок)</button>
+                <button class="ai-quick-tag-btn" onclick="quickFill('Який розклад у Д\'яченко?')">👩‍🏫 Д'яченко</button>
+                <button class="ai-quick-tag-btn" onclick="quickFill('Розклад дзвінків')">⏰ Дзвінки</button>
+            </div>
+            <div id="aiSearchResults"></div>
+        </div>
+
+        <div class="ai-chat-footer">
+            <input type="text" id="aiQueryInput" class="ai-chat-input" placeholder="Введіть запит до сервера..." onkeydown="if(event.key==='Enter') executeAiQuery()">
+            <button class="ai-btn-send" onclick="executeAiQuery()">
+                <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- КЛІЄНТСЬКИЙ СКРИПТ: ВІДПРАВКА НА СЕРВЕР -->
+    <script>
+        function toggleAiAssistant() {
+            const modal = document.getElementById('aiAssistantModal');
+            modal.classList.toggle('active');
+            if (modal.classList.contains('active')) {
+                document.getElementById('aiQueryInput').focus();
+            }
+        }
+
+        function quickFill(text) {
+            document.getElementById('aiQueryInput').value = text;
+            executeAiQuery();
+        }
+
+        async function executeAiQuery() {
+            const input = document.getElementById('aiQueryInput');
+            const query = input.value.trim();
+            if (!query) return;
+
+            const resultsArea = document.getElementById('aiSearchResults');
+            const chatBody = document.getElementById('aiChatBody');
+
+            // Повідомлення користувача
+            const userBubble = document.createElement('div');
+            userBubble.style.cssText = "background: #1c355e; color: #fff; padding: 10px 14px; border-radius: 12px 12px 2px 12px; margin-left: auto; max-width: 85%; font-size: 13px; margin-bottom: 8px;";
+            userBubble.textContent = query;
+            resultsArea.appendChild(userBubble);
+            input.value = '';
+
+            // Індикатор запиту до бекенду
+            const loadingCard = document.createElement('div');
+            loadingCard.style.cssText = "background: #fff; border-left: 4px solid #1c355e; padding: 10px 14px; border-radius: 6px; font-size: 12px; color: #64748b; margin-bottom: 8px;";
+            loadingCard.innerHTML = "<i>Пошук у базі знань ННІФТКН...</i>";
+            resultsArea.appendChild(loadingCard);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            try {
+                const response = await fetch('/api/assistant', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+
+                const data = await response.json();
+                resultsArea.removeChild(loadingCard);
+
+                const botCard = document.createElement('div');
+                botCard.style.cssText = "background: #ffffff; border-left: 4px solid #8b1820; padding: 12px 14px; border-radius: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.06); font-size: 13px; line-height: 1.5; margin-bottom: 8px;";
+                botCard.innerHTML = data.reply;
+                resultsArea.appendChild(botCard);
+
+            } catch (err) {
+                resultsArea.removeChild(loadingCard);
+                const errCard = document.createElement('div');
+                errCard.style.cssText = "background: #fee2e2; border-left: 4px solid #ef4444; padding: 10px 14px; border-radius: 6px; font-size: 12.5px; color: #991b1b; margin-bottom: 8px;";
+                errCard.innerHTML = "Помилка зв'язку з сервером. Переконайтеся, що в терміналі запущено команду <code>node server.js</code>.";
+                resultsArea.appendChild(errCard);
+            }
+
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+    </script>
+</body>
+</html>
