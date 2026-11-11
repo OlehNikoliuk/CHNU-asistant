@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
+import Database from 'better-sqlite3';
 
 dotenv.config();
 
@@ -13,22 +14,109 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ limit: '20mb', extended: true }));
-
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Клієнт Ollama
+// ==========================================
+// ШАР 1: OBSERVABILITY / TRACES (SQLite)
+// ==========================================
+const db = new Database(path.join(__dirname, 'assistant_logs.db'));
+db.pragma('journal_mode = WAL');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    query TEXT,
+    entities TEXT,
+    layer_hit TEXT,
+    latency_ms INTEGER,
+    status TEXT,
+    reply TEXT
+  )
+`);
+
+const insertTraceStmt = db.prepare(`
+  INSERT INTO traces (query, entities, layer_hit, latency_ms, status, reply)
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+function recordTrace({ query, entities = null, layerHit, startTime, status, reply }) {
+  const latency = Date.now() - startTime;
+  insertTraceStmt.run(
+    query,
+    entities ? JSON.stringify(entities) : null,
+    layerHit,
+    latency,
+    status,
+    reply ? reply.substring(0, 500) : ''
+  );
+  console.log(`[TRACE] [${layerHit}] [${latency}ms] Status: ${status}`);
+}
+
+// ==========================================
+// ШАР 2: GUARDRAILS (Захист і фільтрація)
+// ==========================================
+const FORBIDDEN_PATTERNS = [
+  /ignore previous instructions/i,
+  /забудь (всі |попередні )?інструкції/i,
+  /system prompt/i,
+  /ти тепер (не|новий)/i,
+  /jailbreak/i,
+  /drop table/i,
+  /<script>/i
+];
+
+const TOXIC_PATTERNS = [
+  /\b(хуй|пізд|єбат|бляд|сука|мудак|гандон|чмо)\b/i
+];
+
+function runGuardrails(query) {
+  if (!query || typeof query !== 'string') {
+    return { passed: false, reason: 'EMPTY_INPUT', message: 'Будь ласка, введіть текстове повідомлення.' };
+  }
+
+  if (query.length > 500) {
+    return { passed: false, reason: 'TOO_LONG', message: 'Запит занадто довгий. Будь ласка, сформулюйте запитання коротше.' };
+  }
+
+  for (const pattern of FORBIDDEN_PATTERNS) {
+    if (pattern.test(query)) {
+      return { 
+        passed: false, 
+        reason: 'PROMPT_INJECTION', 
+        message: 'Запит заблоковано системою безпеки інфо-кіоску ННІФТКН.' 
+      };
+    }
+  }
+
+  for (const pattern of TOXIC_PATTERNS) {
+    if (pattern.test(query)) {
+      return { 
+        passed: false, 
+        reason: 'TOXICITY', 
+        message: 'Будь ласка, дотримуйтесь академічної доброчесності та культури мовлення.' 
+      };
+    }
+  }
+
+  return { passed: true };
+}
+
+// ==========================================
+// ШАР 3: КЛІЄНТ LLM ТА БАЗА ЗНАНЬ
+// ==========================================
+const OLLAMA_BASE = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 const openai = new OpenAI({
-  baseURL: process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1",
+  baseURL: OLLAMA_BASE.endsWith('/v1') ? OLLAMA_BASE : `${OLLAMA_BASE}/v1`,
   apiKey: "ollama",
 });
 
-// Бази даних
 let scheduleData = [];
 let knowledgeBase = {};
 
@@ -45,7 +133,7 @@ try {
   if (fs.existsSync(kbPath)) {
     knowledgeBase = JSON.parse(fs.readFileSync(kbPath, 'utf-8'));
   }
-  console.log(`[Ініціалізація] Базу успішно підключено. Записів розкладу: ${scheduleData.length}`);
+  console.log(`[Ініціалізація] Записів розкладу: ${scheduleData.length}`);
 } catch (err) {
   console.error("[Помилка] Збій читання JSON-файлів:", err.message);
 }
@@ -61,7 +149,9 @@ const CALL_SCHEDULE = `⏰ Розклад дзвінків ННІФТКН:
 const DAYS_MAP = ["неділя", "понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота"];
 const normalize = (str) => (str || "").toLowerCase().replace(/['’`ʼ]/g, "").trim();
 
-// 1. Швидка база знань
+// ==========================================
+// ШАР 4: ROUTER & FAST-CACHE (Без виклику LLM)
+// ==========================================
 function checkDirectKnowledge(query) {
   const q = normalize(query);
 
@@ -75,7 +165,7 @@ function checkDirectKnowledge(query) {
       if (typeof deanery === 'string') return `🏛️ Інформація про деканат:\n${deanery}`;
       return `🏛️ Деканат ННІФТКН:\n• Адреса: ${deanery.address || "вул. Сторожинецька, 101, Корпус №9"}\n• Кабінет: ${deanery.room || deanery.office || "2-й поверх"}\n• Години роботи: ${deanery.working_hours || "08:30 – 17:00"}\n• Пошта: ${deanery.email || "iftcs@chnu.edu.ua"}`;
     }
-    return `🏛️ Деканат ННІФТКН розташований у Корпусі №9 (вул. Сторожинецька, 101, 2-й поверх). Працює в будні дні з 08:30 до 17:00.`;
+    return `🏛️ Деканат ННІФТКН розташований у Корпусі №9 (вул. Сторожинецька, 101, 2-й поверх). Графік роботи: пн-пт з 08:30 до 17:00.`;
   }
 
   if (q.includes("корпус") || q.includes("адрес") || q.includes("де знаходиться інститут") || q.includes("де вхід") || q.includes("сторожинецька")) {
@@ -86,16 +176,12 @@ function checkDirectKnowledge(query) {
     return `📍 ННІФТКН ЧНУ ім. Юрія Федьковича:\n• Основна адреса: м. Чернівці, вул. Сторожинецька, 101 (Корпус №9)`;
   }
 
-  if (q.includes("гуртожит") || q.includes("студмістечк") || q.includes("поселення")) {
-    if (knowledgeBase.commonInfo?.dormitories) {
-      return `🏢 Інформація про гуртожитки:\n${knowledgeBase.commonInfo.dormitories}`;
-    }
-  }
-
   return null;
 }
 
-// 2. Витягування сутностей
+// ==========================================
+// ШАР 5: MCP-LIKE ENTITY PARSER & RAG (qwen2.5:7b)
+// ==========================================
 async function extractEntitiesWithLLM(userQuery) {
   const q = normalize(userQuery);
   const now = new Date();
@@ -126,18 +212,18 @@ async function extractEntitiesWithLLM(userQuery) {
     return { teacher, group, day };
   }
 
-  const prompt = `Ти — парсер запитів. Витягни сутності JSON: {"teacher": null, "group": null, "day": null}. Текст: "${userQuery}"`;
+  const prompt = `Ти — точний парсер розкладу. Поверни виключно JSON об'єкт: {"teacher": null, "group": null, "day": null}. Текст студента: "${userQuery}"`;
   
   try {
     const fetchPromise = openai.chat.completions.create({
-      model: "qwen2.5:3b",
+      model: "qwen2.5:7b",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.0,
-      max_tokens: 80
+      max_tokens: 60
     });
 
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Timeout LLM")), 2500)
+      setTimeout(() => reject(new Error("Timeout LLM")), 3000)
     );
 
     const res = await Promise.race([fetchPromise, timeoutPromise]);
@@ -149,18 +235,14 @@ async function extractEntitiesWithLLM(userQuery) {
   }
 }
 
-// 3. Семантичний пошук розкладу
 async function searchSchedule(query) {
   if (!Array.isArray(scheduleData) || scheduleData.length === 0) return { results: [], entities: null };
 
   const entities = await extractEntitiesWithLLM(query);
-  console.log("[Розпізнані сутності]:", entities);
-
   const targetTeacher = entities.teacher ? normalize(entities.teacher) : null;
   const targetGroup = entities.group ? normalize(entities.group) : null;
   const targetDay = entities.day ? normalize(entities.day) : null;
 
-  // Якщо немає жодної цілі пошуку (наприклад, просто "Привіт") — нічого не фільтруємо
   if (!targetTeacher && !targetGroup && !targetDay) {
     return { results: [], entities };
   }
@@ -178,159 +260,240 @@ async function searchSchedule(query) {
   });
 
   if (results.length === 0 && targetTeacher) {
-    results = scheduleData.filter(item => {
-      const itemTeacher = normalize(item.teacher);
-      return itemTeacher.includes(targetTeacher);
-    });
+    results = scheduleData.filter(item => normalize(item.teacher).includes(targetTeacher));
   }
 
   if (results.length === 0 && targetGroup) {
-    results = scheduleData.filter(item => {
-      const itemGroup = normalize(item.group);
-      return itemGroup.includes(targetGroup);
-    });
+    results = scheduleData.filter(item => normalize(item.group).includes(targetGroup));
   }
 
-  return { results: results.slice(0, 15), entities };
+  return { results: results.slice(0, 20), entities };
 }
 
-// 4. Обробка фотографій
+// ==========================================
+// VISION ОБРОБКА ЧЕРЕЗ MOONDREAM
+// ==========================================
 async function processImageRequest(imageBase64, userPrompt) {
-  const promptText = userPrompt || "Прочитай розклад або інформацію на фото і коротко перекажи основні деталі (групи, пари, кабінети).";
+  const promptText = userPrompt || "Прочитай розклад або оголошення на цьому фото та структуруй інформацію.";
+  const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+
+  console.log(`[VISION] Запит до moondream (довжина base64: ${cleanBase64.length})...`);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 40000);
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "moondream",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: promptText },
-            {
-              type: "image_url",
-              image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
-            }
-          ]
-        }
-      ],
-      max_tokens: 300
+    const nativeOllamaUrl = OLLAMA_BASE.replace(/\/v1\/?$/, '');
+    const response = await fetch(`${nativeOllamaUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: "moondream",
+        prompt: promptText,
+        images: [cleanBase64],
+        stream: false
+      })
     });
 
-    return response.choices[0]?.message?.content || "Не вдалося розпізнати зображення.";
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("[VISION Error]:", response.status, errText);
+      return "⚠️ Модель зору moondream повернула помилку. Перевірте статус Ollama.";
+    }
+
+    const data = await response.json();
+    return data.response ? data.response.trim() : "Не вдалося розпізнати текст на фото.";
   } catch (err) {
-    return "📸 Зображення отримано, але модель moondream зараз не запущена. Завантажте її командою: ollama pull moondream.";
+    clearTimeout(timeoutId);
+    console.error("[VISION Exception]:", err.message);
+    if (err.name === 'AbortError') {
+      return "⏱️ Час очікування розпізнавання фото минув. Спробуйте зображення меншого розміру.";
+    }
+    return `📸 Помилка обробки фото: ${err.message}`;
   }
 }
 
-// 5. Головна функція-диспетчер запитів
+// ==========================================
+// ШАР 6: ГОЛОВНИЙ DISPATCHER
+// ==========================================
 async function handleAssistantRequest(req, res) {
-  try {
-    const message = req.body.query || req.body.message || "";
-    const imageBase64 = req.body.image || null;
-    const history = Array.isArray(req.body.history) ? req.body.history : [];
+  const startTime = Date.now();
+  const message = req.body.query || req.body.message || "";
+  const imageBase64 = req.body.image || null;
+  const history = Array.isArray(req.body.history) ? req.body.history : [];
 
-    console.log(`[Запит клієнта]: "${message}" | Зображення: ${imageBase64 ? 'Так' : 'Ні'}`);
-
-    // Перевірка наявності зображення
-    if (imageBase64) {
-      const visionResult = await processImageRequest(imageBase64, message);
-      return res.json({ reply: visionResult });
-    }
-
-    // Рівень 1: Швидка база знань
-    const directKnowledge = checkDirectKnowledge(message);
-    if (directKnowledge) {
-      return res.json({ reply: directKnowledge });
-    }
-
-    // Рівень 2: Пошук по розкладу
-    const { results: matchedClasses, entities } = await searchSchedule(message);
-    const hasExplicitIntent = entities && (entities.teacher || entities.group || entities.day);
-
-    if (matchedClasses.length > 0 && hasExplicitIntent) {
-      const scheduleContext = matchedClasses.map(c => 
-        `- ${c.day}, ${c.period} пара: ${c.subject} (${c.type}), викладач: ${c.teacher}, ауд: ${c.room}, група: ${c.group}`
-      ).join("\n");
-
-      const answerPrompt = `Ти — університетський цифровий асистент ННІФТКН ЧНУ ім. Юрія Федьковича. Спілкуйся природно, ввічливо та живо українською мовою. 
-Не створюй сухих довгих списків, якщо можна пояснити зрозумілими людськими реченнями.
-
-Запитання студента: "${message}"
-
-Знайдені записи в базі:
-${scheduleContext}
-
-Склади чітку, дружню відповідь на основі цих даних (вкажи викладача або групу, час чи номер пари та аудиторію).`;
-
-      try {
-        const resAi = await openai.chat.completions.create({
-          model: "qwen2.5:3b",
-          messages: [{ role: "user", content: answerPrompt }],
-          temperature: 0.1,
-          max_tokens: 1400
-        });
-
-        let naturalReply = resAi.choices[0]?.message?.content || "";
-        naturalReply = naturalReply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-        if (naturalReply) {
-          return res.json({ reply: naturalReply });
-        }
-      } catch (err) {
-        console.warn("[Natural Reply Fallback]:", err.message);
-      }
-
-      // Якщо Qwen раптом не відповіла — віддаємо структурований вивід
-      const fallbackList = matchedClasses.map(c => 
-        `• ${c.day} | ${c.period} пара: ${c.subject}\n   ${c.teacher} | ${c.room} | гр. ${c.group}`
-      ).join("\n\n");
-      return res.json({ reply: `Ось що вдалося знайти в розкладі:\n\n${fallbackList}` });
-    }
-
-    if (hasExplicitIntent && matchedClasses.length === 0) {
-      return res.json({
-        reply: "Я перевірив базу розкладу, але відповідних пар не знайшов. Спробуйте уточнити день, прізвище або номер групи."
+  // 1. Guardrails
+  if (!imageBase64) {
+    const guard = runGuardrails(message);
+    if (!guard.passed) {
+      recordTrace({
+        query: message,
+        layerHit: 'GUARDRAILS_REJECT',
+        startTime,
+        status: guard.reason,
+        reply: guard.message
       });
+      return res.json({ reply: guard.message });
+    }
+  }
+
+  // 2. Vision Request
+  if (imageBase64) {
+    const visionReply = await processImageRequest(imageBase64, message);
+    recordTrace({
+      query: message || '[IMAGE_PROMPT]',
+      layerHit: 'MOONDREAM_VISION',
+      startTime,
+      status: 'SUCCESS',
+      reply: visionReply
+    });
+    return res.json({ reply: visionReply });
+  }
+
+  // 3. Fast-Cache / Router
+  const direct = checkDirectKnowledge(message);
+  if (direct) {
+    recordTrace({
+      query: message,
+      layerHit: 'FAST_CACHE',
+      startTime,
+      status: 'SUCCESS',
+      reply: direct
+    });
+    return res.json({ reply: direct });
+  }
+
+  // 4. RAG Search & LLM Synthesis (qwen2.5:7b)
+  const { results: matchedClasses, entities } = await searchSchedule(message);
+  const hasExplicitIntent = entities && (entities.teacher || entities.group || entities.day);
+
+  if (matchedClasses.length > 0 && hasExplicitIntent) {
+    const scheduleContext = matchedClasses.map(c => 
+      `- ${c.day}, ${c.period} пара: ${c.subject} (${c.type}), викладач: ${c.teacher}, ауд: ${c.room}, група: ${c.group}`
+    ).join("\n");
+
+    const answerPrompt = `Ти — офіційний цифровий навігатор інституту ННІФТКН ЧНУ ім. Юрія Федьковича.
+Дай структуровану, чітку відповідь студенту українською мовою на основі даних розкладу.
+
+ПРАВИЛА:
+1. НЕ пиши вступних фраз на зразок "Ось відповідь:", "За вашим запитом:".
+2. Не вигадуй жодних даних від себе, спирайся виключно на наданий контекст.
+3. Подавай розклад чіткими блоками: день, номер пари, назва дисципліни, викладач, аудиторія.
+
+Запитання: "${message}"
+
+Знайдені записи в базі розкладу:
+${scheduleContext}`;
+
+    try {
+      const resAi = await openai.chat.completions.create({
+        model: "qwen2.5:7b",
+        messages: [{ role: "user", content: answerPrompt }],
+        temperature: 0.1,
+        max_tokens: 700
+      });
+
+      let reply = resAi.choices[0]?.message?.content || "";
+      reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+      if (reply) {
+        recordTrace({
+          query: message,
+          entities,
+          layerHit: 'RAG_LLM_SYNTHESIS',
+          startTime,
+          status: 'SUCCESS',
+          reply
+        });
+        return res.json({ reply });
+      }
+    } catch (err) {
+      console.warn("[RAG Generation Fallback]:", err.message);
     }
 
-    // Рівень 3: Звичайна жива розмова (привітання, загальні питання)
-    const now = new Date();
-    const systemPrompt = `Ти — дружній цифровий помічник студентів і викладачів інституту ННІФТКН ЧНУ ім. Юрія Федьковича. 
-Спілкуйся природно, привітно і невимушено українською мовою. 
-Якщо студент вітається — привітайся у відповідь і запропонуй допомогу з розкладом пар, викладачами, аудиторіями чи деканатом. Не вигадуй розклади від себе.
+    const fallbackList = matchedClasses.map(c => 
+      `• ${c.day} | ${c.period} пара: ${c.subject}\n   ${c.teacher} | ${c.room} | гр. ${c.group}`
+    ).join("\n\n");
+    const fallbackReply = `Ось розклад за вашим запитом:\n\n${fallbackList}`;
 
-ДОВІДНИК ІНСТИТУТУ:
-${JSON.stringify(knowledgeBase, null, 2)}`;
+    recordTrace({
+      query: message,
+      entities,
+      layerHit: 'RAG_FALLBACK_DETERMINISTIC',
+      startTime,
+      status: 'FALLBACK',
+      reply: fallbackReply
+    });
+    return res.json({ reply: fallbackReply });
+  }
 
-    const messagesPayload = [
-      { role: "system", content: systemPrompt },
-      ...history.slice(-4),
-      { role: "user", content: message }
-    ];
+  if (hasExplicitIntent && matchedClasses.length === 0) {
+    const notFoundReply = "За цим запитом пар не знайдено. Перевірте правильність написання прізвища викладача або номера групи.";
+    recordTrace({
+      query: message,
+      entities,
+      layerHit: 'RAG_NOT_FOUND',
+      startTime,
+      status: 'EMPTY_RESULT',
+      reply: notFoundReply
+    });
+    return res.json({ reply: notFoundReply });
+  }
 
+  // 5. Загальне спілкування (qwen2.5:7b)
+  const systemPrompt = `Ти — ввічливий цифровий помічник студентів інституту ННІФТКН ЧНУ ім. Юрія Федьковича. 
+Відповідай стисло, доброзичливо та виключно українською мовою. Допомагай зорієнтуватися по розкладу пар, викладачах, корпусах та деканату.
+Довідка: ${JSON.stringify(knowledgeBase)}`;
+
+  try {
     const completion = await openai.chat.completions.create({
-      model: "qwen2.5:3b",
-      messages: messagesPayload,
-      temperature: 0.4,
-      max_tokens: 250
+      model: "qwen2.5:7b",
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...history.slice(-4),
+        { role: "user", content: message }
+      ],
+      temperature: 0.3,
+      max_tokens: 350
     });
 
     let botReply = completion.choices[0]?.message?.content || "";
     botReply = botReply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-    return res.json({
-      reply: botReply || "Привіт! Я помічник ННІФТКН. Можу підказати пари викладачів, розклад вашої групи або контакти деканату. Чим допомогти?"
+    recordTrace({
+      query: message,
+      entities,
+      layerHit: 'GENERAL_CHAT_LLM',
+      startTime,
+      status: 'SUCCESS',
+      reply: botReply
     });
 
+    return res.json({ reply: botReply });
   } catch (error) {
-    console.error("[Handler Error]:", error.message);
-    return res.json({
-      reply: "🏛️ Деканат ННІФТКН розташований у Корпусі №9 (вул. Сторожинецька, 101, 2-й поверх). Графік роботи: пн-пт з 08:30 до 17:00."
+    const errReply = "🏛️ Деканат ННІФТКН: вул. Сторожинецька, 101 (Корпус №9, 2 поверх). Години роботи: 08:30 – 17:00.";
+    recordTrace({
+      query: message,
+      layerHit: 'ERROR_CATCH',
+      startTime,
+      status: 'SERVER_ERROR',
+      reply: errReply
     });
+    return res.json({ reply: errReply });
   }
 }
 
-// Роути для API
+// ==========================================
+// API АНАЛІТИКИ ТА ЕНДПОІНТИ
+// ==========================================
+app.get('/api/analytics', (req, res) => {
+  const rows = db.prepare('SELECT * FROM traces ORDER BY timestamp DESC LIMIT 50').all();
+  res.json(rows);
+});
+
 app.post('/api/assistant', handleAssistantRequest);
 app.post('/assistant', handleAssistantRequest);
 app.post('/api/chat', handleAssistantRequest);
@@ -338,5 +501,5 @@ app.post('/chat', handleAssistantRequest);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Сервер ННІФТКН запущено на http://localhost:${PORT}`);
+  console.log(`🚀 Сервер запущено на http://localhost:${PORT} (Модель: qwen2.5:7b, Vision: moondream)`);
 });
