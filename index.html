@@ -214,6 +214,7 @@
             width: 420px;
             max-width: calc(100vw - 40px);
             height: 580px;
+            max-height: calc(100vh - 130px);
             background: #ffffff;
             border-radius: 16px;
             box-shadow: 0 16px 45px rgba(0, 0, 0, 0.25);
@@ -485,7 +486,7 @@
             executeAiQuery();
         }
 
-        // Оптимізація та стиснення зображення на стороні клієнта перед відправкою (до макс. 800px)
+        // Оптимізація та стиснення зображення на стороні клієнта перед відправкою
         function handleImageSelected(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -495,7 +496,7 @@
                 const img = new Image();
                 img.onload = function() {
                     const canvas = document.createElement('canvas');
-                    const maxDim = 800; // Оптимальний розмір без перевантаження оперативної пам'яті
+                    const maxDim = 800;
                     let w = img.width;
                     let h = img.height;
 
@@ -574,17 +575,35 @@
 
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-                const data = await response.json();
+                // Прибираємо індикатор завантаження та створюємо картку для потокового друку
                 resultsArea.removeChild(loadingCard);
-
-                const botReply = data.reply || data.response || data.answer || "Інформацію не знайдено.";
 
                 const botCard = document.createElement('div');
                 botCard.style.cssText = "background: #ffffff; border-left: 4px solid #8b1820; padding: 12px 14px; border-radius: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.06); font-size: 13px; line-height: 1.5; margin-bottom: 8px; white-space: pre-line !important; word-break: break-word;";
-                botCard.textContent = botReply;
+                botCard.textContent = "▌";
                 resultsArea.appendChild(botCard);
 
-                dialogHistory.push({ role: 'assistant', content: botReply });
+                // Потокове читання тексту слово за словом
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let botReply = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    botReply += chunk;
+                    // Вирізаємо технічні теги <think>, якщо модель їх генерує
+                    const cleanText = botReply.replace(/<think>[\s\S]*?<\/think>/gi, '');
+                    botCard.textContent = cleanText + " ▌";
+                    chatBody.scrollTop = chatBody.scrollHeight;
+                }
+
+                const finalCleanReply = botReply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || "Інформацію не знайдено.";
+                botCard.textContent = finalCleanReply;
+
+                dialogHistory.push({ role: 'assistant', content: finalCleanReply });
 
             } catch (err) {
                 console.error("AI Error:", err);

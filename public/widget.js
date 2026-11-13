@@ -1,15 +1,13 @@
 // public/widget.js
 (function () {
-  // Базова адреса бекенду на моноблоці (локальна або HTTPS тунелю)
-  const API_URL = window.DEAN_API_URL || 'http://localhost:3000';
+  // Використовуємо поточний домен (працює і на localhost:3000, і через тунель на телефоні)
+  const API_URL = window.DEAN_API_URL || '';
 
-  // Створюємо ізольований контейнер
   const host = document.createElement('div');
   host.id = 'dean-assistant-root';
   document.body.appendChild(host);
   const shadow = host.attachShadow({ mode: 'open' });
 
-  // Стилі Shadow DOM
   const styles = `
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     .dean-toggle-btn {
@@ -56,7 +54,7 @@
       flex: 1; padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
       background: #f8fafc; font-size: 13px;
     }
-    .msg { max-width: 82%; padding: 10px 12px; border-radius: 12px; line-height: 1.45; word-break: break-word; }
+    .msg { max-width: 82%; padding: 10px 12px; border-radius: 12px; line-height: 1.45; word-break: break-word; white-space: pre-wrap; }
     .msg-bot { background: #ffffff; color: #0f172a; border: 1px solid #e2e8f0; align-self: flex-start; }
     .msg-user { background: #1e3a8a; color: #ffffff; align-self: flex-end; }
 
@@ -82,10 +80,8 @@
     }
   `;
 
-  // HTML структура віджета
   const template = `
     <style>${styles}</style>
-    
     <button class="dean-toggle-btn" id="toggleBtn" aria-label="Відкрити чат деканату">
       <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
     </button>
@@ -103,7 +99,7 @@
 
       <div class="dean-group-select">
         <span>Твоя академ. група:</span>
-        <input type="text" id="groupInput" placeholder="напр. 301-Б" />
+        <input type="text" id="groupInput" placeholder="напр. 422" />
       </div>
 
       <div class="dean-messages" id="messagesList">
@@ -113,8 +109,8 @@
       <div class="quick-chips">
         <button class="chip" data-query="Яка зараз пара?">Яка зараз пара?</button>
         <button class="chip" data-query="Розклад на завтра">Розклад на завтра</button>
-        <button class="chip" data-query="Як замовити довідку?">Замовити довідку</button>
-        <button class="chip" data-query="Прийомні години декана">Графік декана</button>
+        <button class="chip" data-query="Сітка дзвінків">Сітка дзвінків</button>
+        <button class="chip" data-query="Деканат ННІФТКН">Деканат</button>
       </div>
 
       <div class="dean-input-area">
@@ -126,7 +122,6 @@
 
   shadow.innerHTML = template;
 
-  // Логіка інтерфейсу
   const toggleBtn = shadow.getElementById('toggleBtn');
   const chatWindow = shadow.getElementById('chatWindow');
   const messagesList = shadow.getElementById('messagesList');
@@ -134,7 +129,6 @@
   const sendBtn = shadow.getElementById('sendBtn');
   const groupInput = shadow.getElementById('groupInput');
 
-  // Зберігаємо групу в localStorage браузера
   groupInput.value = localStorage.getItem('dean_student_group') || '';
   groupInput.addEventListener('input', (e) => {
     localStorage.setItem('dean_student_group', e.target.value.trim());
@@ -148,6 +142,7 @@
     msg.textContent = text;
     messagesList.appendChild(msg);
     messagesList.scrollTop = messagesList.scrollHeight;
+    return msg;
   }
 
   async function handleSend(textToSend) {
@@ -158,17 +153,32 @@
     if (!textToSend) userInput.value = '';
 
     const group = groupInput.value.trim();
+    const botMsgEl = appendMessage('▌', 'bot');
 
     try {
       const res = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, group })
+        body: JSON.stringify({ message: group ? `${text} (група ${group})` : text, group })
       });
-      const data = await res.json();
-      appendMessage(data.reply || 'Не вдалося сформувати відповідь.');
+
+      if (!res.ok) throw new Error('Server error');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let fullText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        fullText += decoder.decode(value, { stream: true });
+        botMsgEl.textContent = fullText + ' ▌';
+        messagesList.scrollTop = messagesList.scrollHeight;
+      }
+
+      botMsgEl.textContent = fullText || 'Не вдалося сформувати відповідь.';
     } catch (err) {
-      appendMessage('Помилка зʼєднання з сервером деканату. Перевірте мережу або зверніться до ауд. 210.');
+      botMsgEl.textContent = 'Помилка зʼєднання з сервером деканату.';
     }
   }
 
