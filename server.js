@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
+import { fetchLiveTeacherFromSite, fetchLiveInstituteInfo } from './services/liveCrawler.js';
 
 dotenv.config();
 
@@ -34,7 +35,7 @@ const openai = new OpenAI({
 });
 
 // ==========================================
-// ШАР 1: OBSERVABILITY / TRACES (JSON замість SQLite)
+// ШАР 1: OBSERVABILITY / TRACES
 // ==========================================
 const tracesPath = path.join(__dirname, 'traces.json');
 if (!fs.existsSync(tracesPath)) {
@@ -100,10 +101,11 @@ function runGuardrails(query) {
 }
 
 // ==========================================
-// ШАР 3: БАЗА ЗНАНЬ
+// ШАР 3: БАЗА ЗНАНЬ (Розклад + Довідник викладачів)
 // ==========================================
 let scheduleData = [];
 let knowledgeBase = {};
+let teachersDirectory = {};
 
 try {
   let schedulePath = path.join(__dirname, 'schedule_2026.json');
@@ -111,6 +113,7 @@ try {
     schedulePath = path.join(__dirname, 'schedule 2026.json');
   }
   const kbPath = path.join(__dirname, 'knowledge_base.json');
+  const dirPath = path.join(__dirname, 'teachers_directory.json');
 
   if (fs.existsSync(schedulePath)) {
     scheduleData = JSON.parse(fs.readFileSync(schedulePath, 'utf-8'));
@@ -118,7 +121,14 @@ try {
   if (fs.existsSync(kbPath)) {
     knowledgeBase = JSON.parse(fs.readFileSync(kbPath, 'utf-8'));
   }
-  console.log(`[Ініціалізація] Записів розкладу: ${scheduleData.length} | Викладачів у базі: ${Object.keys(knowledgeBase.teachers || {}).length}`);
+  if (fs.existsSync(dirPath)) {
+    teachersDirectory = JSON.parse(fs.readFileSync(dirPath, 'utf-8'));
+  }
+
+  const mergedTeachers = { ...teachersDirectory, ...(knowledgeBase.teachers || {}) };
+  knowledgeBase.teachers = mergedTeachers;
+
+  console.log(`[Ініціалізація] Записів розкладу: ${scheduleData.length} | Викладачів у базі: ${Object.keys(mergedTeachers).length}`);
 } catch (err) {
   console.error('[Помилка] Збій читання JSON-файлів:', err.message);
 }
@@ -133,7 +143,6 @@ const CALL_SCHEDULE = `⏰ Розклад дзвінків ННІФТКН:
 
 const DAYS_MAP = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', "п'ятниця", 'субота'];
 
-// Нормалізація + захист від випадкових латинських літер (i, o, a, e, c, p, x)
 const normalize = (str) =>
   (str || '')
     .toLowerCase()
@@ -147,11 +156,10 @@ const normalize = (str) =>
     .replace(/['’`ʼ]/g, '')
     .trim();
 
-// Правильний стемінг українських прізвищ (Рябий / Рябого / Рябому -> ряб)
 function getSurnameStem(surname) {
   const clean = normalize(surname).replace(/[^а-яіїєґ]/g, '');
   if (clean.length <= 3) return clean;
-  if (clean.length <= 5) return clean.slice(0, 3); // "рябий" -> "ряб"
+  if (clean.length <= 5) return clean.slice(0, 3);
   return clean.replace(/(ого|ому|ою|ої|ими|іми|ами|ями|ях|ах|ов|ев|єв|ий|ій|а|я|у|ю|о|е|і|и)$/, '');
 }
 
@@ -161,13 +169,13 @@ function getSurnameStem(surname) {
 function checkDirectKnowledge(query) {
   const q = normalize(query);
   if (q.includes('як тебе звати') || q.includes('хто ти') || q.includes('що ти вмієш')) {
-    return 'Я — цифровий асистент та навігатор ННІФТКН ЧНУ ім. Юрія Федьковича. Допомагаю знайти розклад занять, інформацію про викладачів, аудиторії, контакти деканату та розпізнати оголошення зі стендів.';
+    return 'Я — цифровий асистент та навігатор ННІФТКН ЧНУ ім. Юрія Федьковича. Допомагаю знайти розклад занять, актуальну інформацію про викладачів, керівництво й новини з сайту інституту, контакти деканату та розпізнати оголошення зі стендів.';
   }
   if (q.includes('дзвін') || q.includes('пари коли') || q.includes('початок пар') || q.includes('сітка')) {
     return CALL_SCHEDULE;
   }
 
-  if (q.includes('деканат') || q.includes('декан') || q.includes('заступник') || q.includes('телефон') || q.includes('номер') || q.includes('подзвонити')) {
+  if (q.includes('деканат') || q.includes('декан') || q.includes('телефон') || q.includes('номер') || q.includes('подзвонити')) {
     const deanery = knowledgeBase.deanery || knowledgeBase.contacts?.deanery || knowledgeBase['деканат'];
     if (deanery) {
       if (typeof deanery === 'string') return `🏛️ Інформація про деканат:\n${deanery}`;
@@ -208,14 +216,14 @@ function extractEntities(userQuery) {
     }
   }
 
-  const groupMatch = q.match(/\b\d{2,3}[а-яa-z]?\b/);
+  const groupMatch = q.match(/\b\d{2,3}[а-яa-z]{0,2}\b/);
   const group = groupMatch ? groupMatch[0] : null;
 
   let teacher = null;
   if (q.includes('фесів') || q.includes('феськ')) {
     teacher = 'Фесів';
   } else {
-    // 1. Пошук по словнику knowledgeBase.teachers
+    // 1. Пошук по об'єднаному словнику викладачів (з кафедр + KB)
     const teacherKeys = Object.keys(knowledgeBase.teachers || {});
     for (const key of teacherKeys) {
       const surname = key.split(/[\s.]+/)[0];
@@ -239,6 +247,14 @@ function extractEntities(userQuery) {
         }
       }
     }
+
+    // 3. Якщо викладача ще немає в локальних JSON — беремо ймовірне прізвище із запиту "Хто такий [Прізвище]"
+    if (!teacher) {
+      const bioMatch = userQuery.match(/(?:хто такий|хто така|хто це|про викладача|інформація про)\s+([А-ЯІЇЄҐ][а-яіїєґ'’\-]{2,})/i);
+      if (bioMatch && bioMatch[1]) {
+        teacher = bioMatch[1].trim();
+      }
+    }
   }
 
   return { teacher, group, day };
@@ -259,12 +275,44 @@ function matchGroupInRecord(itemGroup, targetGroup) {
   return g === targetGroup || new RegExp(`\\b${targetGroup}\\b`).test(g);
 }
 
-function searchSchedule(query) {
+function searchSchedule(query, history = []) {
   if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
     return { results: [], entities: null, exactDayEmpty: false };
   }
 
   const entities = extractEntities(query);
+  const q = normalize(query);
+
+  // Якщо в поточному запиті не названо викладача чи групу (наприклад, "які в нього пари?", "а в середу?"),
+  // підтягуємо їх з попередніх 4 повідомлень діалогу (history)
+  const isScheduleRelated =
+    entities.day ||
+    q.includes('розклад') ||
+    q.includes('пар') ||
+    q.includes('коли') ||
+    q.includes('кабінет') ||
+    q.includes('аудитор') ||
+    q.includes('в нього') ||
+    q.includes('в неї') ||
+    q.includes('його') ||
+    q.includes('її') ||
+    q.includes('цієї групи');
+
+  if (isScheduleRelated && (!entities.teacher || !entities.group) && Array.isArray(history) && history.length > 0) {
+    for (let i = history.length - 1; i >= Math.max(0, history.length - 4); i--) {
+      const msgText = history[i]?.content || '';
+      if (!msgText) continue;
+      const pastEntities = extractEntities(msgText);
+      if (!entities.teacher && pastEntities.teacher) {
+        entities.teacher = pastEntities.teacher;
+      }
+      if (!entities.group && pastEntities.group) {
+        entities.group = pastEntities.group;
+      }
+      if (entities.teacher || entities.group) break;
+    }
+  }
+
   const targetGroup = entities.group ? normalize(entities.group) : null;
   const targetDay = entities.day ? normalize(entities.day) : null;
 
@@ -272,7 +320,6 @@ function searchSchedule(query) {
     return { results: [], entities, exactDayEmpty: false };
   }
 
-  // 1. Точний пошук (Група / Викладач + День)
   let results = scheduleData.filter((item) => {
     if (!matchTeacherInRecord(item.teacher, entities.teacher)) return false;
     if (!matchGroupInRecord(item.group, targetGroup)) return false;
@@ -282,7 +329,6 @@ function searchSchedule(query) {
 
   let exactDayEmpty = false;
 
-  // 2. Якщо в цей день пар немає — беремо пари викладача/групи за весь тиждень
   if (results.length === 0 && targetDay && (targetGroup || entities.teacher)) {
     exactDayEmpty = true;
     results = scheduleData.filter((item) => {
@@ -292,7 +338,7 @@ function searchSchedule(query) {
     });
   }
 
-  return { results: results.slice(0, 30), entities, exactDayEmpty };
+  return { results: results.slice(0, 40), entities, exactDayEmpty };
 }
 
 // ==========================================
@@ -337,7 +383,7 @@ async function processImageRequest(imageBase64, userPrompt) {
 }
 
 // ==========================================
-// ДОПОМІЖНІ ФУНКЦІЇ СТРІМІНГУ ВІДПОВІДІ (ОПТИМІЗОВАНО ПІД ШВИДКІСТЬ)
+// ДОПОМІЖНІ ФУНКЦІЇ СТРІМІНГУ ВІДПОВІДІ
 // ==========================================
 function initStreamHeaders(res) {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -359,7 +405,7 @@ async function streamLLMToResponse({ res, messages, temperature = 0.1, maxTokens
         model: CHAT_MODEL,
         messages,
         stream: true,
-        keep_alive: -1, // Тримає модель у пам'яті постійно
+        keep_alive: -1,
         options: {
           num_ctx: numCtx,
           num_predict: maxTokens,
@@ -460,12 +506,12 @@ async function handleAssistantRequest(req, res) {
     return res.end(direct);
   }
 
-  // 4. RAG Search & LLM Synthesis (потоково)
-  const { results: matchedClasses, entities, exactDayEmpty } = searchSchedule(message);
+  // 4. RAG Search & Live HTTP Crawler (з урахуванням історії чату)
+  const { results: matchedClasses, entities, exactDayEmpty } = searchSchedule(message, history);
   const hasExplicitIntent = entities && (entities.teacher || entities.group || entities.day);
-
-  // 4.1. Інформація про викладача (біографія + групи + предмети)
   const qNorm = normalize(message);
+
+  // 4.1. Інформація про конкретного викладача (LIVE по HTTP-дереву 11 кафедр + керівництва)
   const isBioQuery =
     entities?.teacher &&
     (qNorm.includes('хто так') ||
@@ -479,62 +525,106 @@ async function handleAssistantRequest(req, res) {
       qNorm.includes('які предмети') ||
       qNorm.includes('у яких груп') ||
       qNorm.includes('в яких груп') ||
-      qNorm.includes('які груп')) &&
+      qNorm.includes('які груп') ||
+      qNorm.includes('директор')) &&
     !qNorm.includes('розклад') &&
     !qNorm.includes('коли пара') &&
+    !qNorm.includes('в які дні') &&
     !qNorm.includes('сьогодні') &&
     !qNorm.includes('завтра');
 
   if (isBioQuery) {
-    const allTeacherClasses = scheduleData.filter((item) => matchTeacherInRecord(item.teacher, entities.teacher));
+    const stem = getSurnameStem(entities.teacher.split(/[\s.]+/)[0]);
 
+    // Робимо LIVE HTTP-запит по дереву сайту ЧНУ в реальному часі
+    const liveSiteData = await fetchLiveTeacherFromSite(stem);
+
+    const allTeacherClasses = scheduleData.filter((item) => matchTeacherInRecord(item.teacher, entities.teacher));
     const uniqueSubjects = [...new Set(allTeacherClasses.map((c) => c.subject).filter(Boolean))];
     const uniqueGroups = [...new Set(allTeacherClasses.map((c) => c.group).filter(Boolean))];
-    const scheduleName = allTeacherClasses[0]?.teacher || entities.teacher;
 
-    const teachersDict = knowledgeBase.teachers || {};
-    const matchedKey = Object.keys(teachersDict).find((k) =>
-      normalize(k).includes(getSurnameStem(entities.teacher.split(/[\s.]+/)[0]))
-    );
-    const bioData = matchedKey ? teachersDict[matchedKey] : null;
-
-    const bioContext = bioData
-      ? `ПІБ: ${bioData.fullName}\nПосада: ${bioData.position}\nБіографія: ${bioData.bio}`
-      : `Ім'я в розкладі: ${scheduleName}`;
+    const liveContext = liveSiteData
+      ? `LIVE-ДАНІ З ОФІЦІЙНОГО САЙТУ ЧНУ (${liveSiteData.sourceUrl}):\nМаршрут HTTP-дерева: ${liveSiteData.httpTrail.join(' -> ')}\nАктуальний текст зі сторінки:\n"""${liveSiteData.liveText}"""`
+      : `На сторінках кафедр точного збігу не знайдено. Запис у розкладі: ${allTeacherClasses[0]?.teacher || entities.teacher}`;
 
     const bioPrompt = `Ти — офіційний цифровий навігатор ННІФТКН ЧНУ ім. Юрія Федьковича.
-Користувач запитує про викладача: "${message}".
+Користувач запитує: "${message}".
 
-Офіційна інформація про викладача:
-${bioContext}
+${liveContext}
 
-Дані з актуального розкладу занять:
-- Дисципліни, які викладає: ${uniqueSubjects.join(', ') || 'не вказано'}
-- Групи, у яких веде пари: ${uniqueGroups.join(', ') || 'не вказано'}
+Додаткові дані з розкладу занять:
+- Дисципліни: ${uniqueSubjects.join(', ') || 'не вказано'}
+- Групи: ${uniqueGroups.join(', ') || 'не вказано'}
 
-ПРАВИЛА ВІДПОВІДІ:
-1. Сформуй чітку, структуровану довідку (3–4 речення або короткий список): хто це (ПІБ, посада, біографія), які предмети викладає та в яких групах веде пари.
-2. НЕ виводь погодинний розклад по днях тижня та аудиторіях, якщо про це не питали.
-3. Використовуй виключно наведені вище факти, нічого не вигадуй від себе.
-4. У кінці одним реченням запропонуй: "Якщо потрібно, можу показати його точний розклад занять."`;
+СУВОРІ ПРАВИЛА:
+1. Головним джерелом істини є "LIVE-ДАНІ З ОФІЦІЙНОГО САЙТУ ЧНУ". Бери ім'я, по-батькові, посаду, науковий ступінь та кафедру ВИКЛЮЧНО з тексту сайту (ніколи не вгадуй ім'я чи по-батькові за ініціалами!).
+2. Сформуй чітку довідку (3–4 речення): хто це (повне ПІБ із сайту, посада, кафедра), які предмети викладає та в яких групах веде пари.
+3. У кінці відповіді обов'язково вкажи джерело у форматі:
+   🔗 Джерело (HTTP-вузол): ${liveSiteData ? liveSiteData.sourceUrl : 'база розкладу ННІФТКН'}`;
 
     return await streamLLMToResponse({
       res,
       messages: [{ role: 'user', content: bioPrompt }],
-      temperature: 0.1,
-      maxTokens: 400,
-      numCtx: 1536,
+      temperature: 0.05,
+      maxTokens: 450,
+      numCtx: 2560,
       query: message,
       entities,
-      layerHit: 'TEACHER_BIO_STREAM',
+      layerHit: liveSiteData ? 'LIVE_HTTP_TREE_STREAM' : 'TEACHER_BIO_FALLBACK',
       startTime,
     });
+  }
+
+  // 4.1.5. Живі сторінки керівництва, кафедр, вченої ради та новин з ptcsi.chnu.edu.ua
+  if (
+    !hasExplicitIntent ||
+    qNorm.includes('новин') ||
+    qNorm.includes('керівництв') ||
+    qNorm.includes('директор') ||
+    qNorm.includes('кафедр') ||
+    qNorm.includes('вчена рада') ||
+    qNorm.includes('вступ')
+  ) {
+    const liveInstData = await fetchLiveInstituteInfo(message);
+    if (liveInstData) {
+      const instPrompt = `Ти — офіційний цифровий навігатор ННІФТКН ЧНУ ім. Юрія Федьковича.
+Користувач запитує: "${message}".
+
+LIVE-ДАНІ З ОФІЦІЙНОГО САЙТУ ІНСТИТУТУ (${liveInstData.sourceUrl}):
+"""${liveInstData.liveText}"""
+
+ПРАВИЛА ВІДПОВІДІ:
+1. Відповідай виключно на основі наведеного тексту з сайту інституту, нічого не вигадуй.
+2. Подай інформацію чітко та структуровано (списком або 3–4 реченнями).
+3. У кінці відповіді обов'язково вкажи джерело:
+   🔗 Джерело (HTTP-вузол): ${liveInstData.sourceUrl}`;
+
+      return await streamLLMToResponse({
+        res,
+        messages: [{ role: 'user', content: instPrompt }],
+        temperature: 0.1,
+        maxTokens: 500,
+        numCtx: 2560,
+        query: message,
+        entities,
+        layerHit: 'LIVE_INSTITUTE_STREAM',
+        startTime,
+      });
+    }
   }
 
   // 4.2. Розклад занять
   if (matchedClasses.length > 0 && hasExplicitIntent) {
     const scheduleContext = matchedClasses
-      .map((c) => `- ${c.day}, ${c.period} пара: ${c.subject} (${c.type}), викладач: ${c.teacher}, ауд: ${c.room}, група: ${c.group}`)
+      .map((c) => {
+        const weekLabel =
+          c.week === '1'
+            ? '1-й тиждень (непарний)'
+            : c.week === '2'
+              ? '2-й тиждень (парний)'
+              : 'щотижня (обидва тижні)';
+        return `- ${c.day}, ${c.period} пара (${weekLabel}): ${c.subject} (${c.type}), викладач: ${c.teacher}, ауд: ${c.room}, група: ${c.group}`;
+      })
       .join('\n');
 
     const dayNote =
@@ -549,7 +639,7 @@ ${dayNote}
 ПРАВИЛА:
 1. НЕ пиши вступних фраз на зразок "За вашим запитом знайдено...".
 2. Не вигадуй жодних даних від себе, спирайся виключно на наданий контекст.
-3. Подавай розклад чіткими блоками: день, номер пари, назва дисципліни, викладач, аудиторія.
+3. Подавай розклад чіткими блоками: день, номер пари, тиждень (чисельник/знаменник), назва дисципліни, викладач, аудиторія, група.
 
 Запитання: "${message}"
 
@@ -561,7 +651,7 @@ ${scheduleContext}`;
       messages: [{ role: 'user', content: answerPrompt }],
       temperature: 0.1,
       maxTokens: 800,
-      numCtx: 2048,
+      numCtx: 2560,
       query: message,
       entities,
       layerHit: 'RAG_LLM_STREAM',
@@ -576,7 +666,7 @@ ${scheduleContext}`;
     return res.end(notFoundReply);
   }
 
-  // 5. Загальне спілкування (БЕЗ commonInfo, щоб не вигадувало корпуси на невідомі прізвища)
+  // 5. Загальне спілкування
   const systemPrompt = `Ти — ввічливий цифровий помічник студентів інституту ННІФТКН ЧНУ ім. Юрія Федьковича.
 Відповідай стисло (2–3 речення) та українською мовою.
 Контакти деканату: вул. Сторожинецька, 101 (Корпус №9), тел. (0372) 54-71-73, email: iftcs@chnu.edu.ua.
@@ -600,7 +690,7 @@ ${scheduleContext}`;
 }
 
 // ==========================================
-// API АНАЛІТИКИ ТА ЕНДПОІНТИ
+// API АНАЛІТИКИ ТА HTTP-ДЕРЕВА РЕСУРСІВ
 // ==========================================
 app.get('/api/analytics', (req, res) => {
   try {
@@ -609,6 +699,14 @@ app.get('/api/analytics', (req, res) => {
   } catch (e) {
     res.json([]);
   }
+});
+
+app.get('/api/schedule-raw', (req, res) => {
+  res.json(scheduleData);
+});
+
+app.get('/api/teachers', (req, res) => {
+  res.json(knowledgeBase.teachers || {});
 });
 
 app.post('/api/assistant', handleAssistantRequest);

@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Розклад занять — ННІФТКН ЧНУ</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #1d4ed8;
+      --primary-light: #eff6ff;
+      --lec-bg: #eff6ff; --lec-border: #3b82f6; --lec-text: #1e40af;
+      --prac-bg: #ecfdf5; --prac-border: #10b981; --prac-text: #065f46;
+      --lab-bg: #f5f3ff; --lab-border: #8b5cf6; --lab-text: #5b21b6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo-badge {
+      background: var(--primary); color: #fff; font-weight: 800; font-size: 13px;
+      padding: 8px 10px; border-radius: 8px; letter-spacing: 0.5px;
+    }
+    .brand-title h1 { font-size: 16px; font-weight: 700; }
+    .brand-title p { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .week-switcher { display: flex; background: var(--bg); padding: 4px; border-radius: 8px; border: 1px solid var(--border); }
+    .week-btn {
+      border: none; background: transparent; padding: 6px 14px; border-radius: 6px;
+      font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; transition: 0.15s;
+    }
+    .week-btn.active { background: var(--primary); color: #fff; }
+
+    .layout { display: flex; flex: 1; overflow: hidden; }
+
+    aside {
+      width: 280px; background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; padding: 14px; gap: 14px; flex-shrink: 0; overflow: hidden;
+    }
+    .mode-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; flex-shrink: 0; }
+    .mode-btn {
+      padding: 8px 4px; border: 1px solid var(--border); background: var(--surface);
+      border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--text); cursor: pointer;
+    }
+    .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+    .search-group { flex-shrink: 0; }
+    .search-group label { display: block; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+    .search-input {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 13px; outline: none; transition: 0.15s; flex-shrink: 0;
+    }
+    .search-input:focus { border-color: var(--primary); }
+
+    /* ВИПРАВЛЕНО: нормальна висота та прокрутка елементів списку груп і викладачів */
+    .entity-list {
+      flex: 1; min-height: 0; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 3px; padding-right: 4px;
+    }
+    .entity-item {
+      flex-shrink: 0;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      line-height: 1.4;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text);
+    }
+    .entity-item:hover { background: var(--bg); }
+    .entity-item.active { background: var(--primary-light); color: var(--primary); font-weight: 600; }
+
+    .legend { flex-shrink: 0; border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); }
+    .legend-item { display: flex; align-items: center; gap: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 3px; }
+
+    main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .sub-header {
+      padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-shrink: 0;
+    }
+    .sub-header h2 { font-size: 17px; font-weight: 700; }
+    .week-pill { background: var(--bg); border: 1px solid var(--border); padding: 4px 12px; border-radius: 99px; font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+
+    .grid-wrapper { flex: 1; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 850px; table-layout: fixed; }
+    th {
+      position: sticky; top: 0; background: var(--bg); z-index: 2;
+      padding: 10px; font-size: 11px; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+      text-align: left;
+    }
+    th:first-child { width: 95px; }
+    td {
+      vertical-align: top; padding: 8px; border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border); min-height: 95px; background: var(--surface);
+    }
+    .pair-cell { background: #fcfcfd; }
+    .pair-num { font-size: 16px; font-weight: 700; color: var(--primary); }
+    .pair-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .card {
+      padding: 8px 10px; border-radius: 8px; margin-bottom: 6px;
+      border-left: 3px solid var(--lec-border); background: var(--lec-bg); font-size: 12px;
+    }
+    .card.prac { border-left-color: var(--prac-border); background: var(--prac-bg); }
+    .card.lab { border-left-color: var(--lab-border); background: var(--lab-bg); }
+    .card-type { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; color: var(--lec-text); }
+    .card.prac .card-type { color: var(--prac-text); }
+    .card.lab .card-type { color: var(--lab-text); }
+    .card-subj { font-weight: 700; color: var(--text); margin-bottom: 4px; line-height: 1.3; }
+    .card-meta { color: var(--primary); font-weight: 600; font-size: 11px; cursor: pointer; text-decoration: underline; display: inline-block; margin-bottom: 2px; margin-right: 6px; }
+    .card-sub { color: var(--muted); font-size: 11px; }
+
+    @media (max-width: 768px) {
+      .layout { flex-direction: column; overflow: auto; }
+      aside { width: 100%; height: 290px; border-right: none; border-bottom: 1px solid var(--border); }
+      body { height: auto; overflow: auto; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="logo-badge">ЧНУ</div>
+    <div class="brand-title">
+      <h1>Розклад занять — ННІФТКН</h1>
+      <p id="statsLine">Завантаження бази розкладу...</p>
+    </div>
+  </div>
+  <div class="week-switcher">
+    <button class="week-btn active" data-week="1" onclick="setWeek(1)">Тиждень 1</button>
+    <button class="week-btn" data-week="2" onclick="setWeek(2)">Тиждень 2</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="mode-tabs">
+      <button class="mode-btn active" data-mode="group" onclick="setMode('group')">👥 Група</button>
+      <button class="mode-btn" data-mode="teacher" onclick="setMode('teacher')">🎓 Викладач</button>
+      <button class="mode-btn" data-mode="room" onclick="setMode('room')">🚪 Аудиторія</button>
+    </div>
+
+    <div class="search-group">
+      <label>Глобальний пошук</label>
+      <input type="text" id="globalSearch" class="search-input" placeholder="Предмет, група, викладач..." oninput="renderGrid()">
+    </div>
+
+    <div class="search-group" style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
+      <label id="listLabel">Група (0)</label>
+      <input type="text" id="sidebarFilter" class="search-input" placeholder="Фільтр..." style="margin-bottom:8px;" oninput="renderSidebar()">
+      <div id="entityList" class="entity-list"></div>
+    </div>
+
+    <div class="legend">
+      <div class="legend-item"><span class="dot" style="background:var(--lec-border)"></span> Лекція</div>
+      <div class="legend-item"><span class="dot" style="background:var(--prac-border)"></span> Практика</div>
+      <div class="legend-item"><span class="dot" style="background:var(--lab-border)"></span> Лабораторна</div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="sub-header">
+      <h2 id="currentHeader">Оберіть групу або викладача</h2>
+      <span class="week-pill" id="weekLabel">1-й (непарний) тиждень</span>
+    </div>
+    <div class="grid-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Пара</th>
+            <th>Понеділок</th>
+            <th>Вівторок</th>
+            <th>Середа</th>
+            <th>Четвер</th>
+            <th>П'ятниця</th>
+          </tr>
+        </thead>
+        <tbody id="scheduleBody"></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script src="./schedule_data.js"></script>
+
+<script>
+  const TIMES = {
+    1: '08:20–09:40',
+    2: '09:50–11:10',
+    3: '11:30–12:50',
+    4: '13:00–14:20',
+    5: '14:40–16:00',
+    6: '16:10–17:30'
+  };
+  const DAYS = ['Понеділок', 'Вівторок', 'Середа', 'Четвер', "П'ятниця"];
+
+  let rawData = [];
+  let currentMode = 'group';
+  let currentValue = '';
+  let currentWeek = 1;
+
+  // ВИПРАВЛЕНО: нормалізація дня тижня без залежності від типу апострофа (' vs ’ vs без апострофа)
+  function normalizeDay(str) {
+    return (str || '').toLowerCase().replace(/['’ʼ`"]/g, '').trim();
+  }
+
+  async function init() {
+    try {
+      if (window.SCHEDULE_DATA && Array.isArray(window.SCHEDULE_DATA)) {
+        rawData = window.SCHEDULE_DATA;
+      } else {
+        let res = await fetch('/api/schedule-raw');
+        if (!res.ok) res = await fetch('./schedule_2026.json');
+        rawData = await res.json();
+      }
+
+      const groups = new Set(rawData.map(x => x.group).filter(Boolean));
+      const teachers = getUniqueList('teacher');
+      document.getElementById('statsLine').textContent =
+        `Актуальний розклад • ${groups.size} груп • ${teachers.length} викладачів • ${rawData.length} пар`;
+
+      parseHashOrDefault();
+    } catch (e) {
+      document.getElementById('statsLine').textContent = 'Помилка: не знайдено schedule_data.js або schedule_2026.json';
+      console.error(e);
+    }
+  }
+
+  function parseHashOrDefault() {
+    const hash = decodeURIComponent(window.location.hash.replace(/^#\/?/, ''));
+    const [mode, val] = hash.split('/');
+    if (['group', 'teacher', 'room'].includes(mode) && val) {
+      currentMode = mode;
+      currentValue = val;
+    } else {
+      const list = getUniqueList('group');
+      currentValue = list.includes('422') ? '422' : (list[0] || '');
+    }
+    syncUI();
+  }
+
+  window.addEventListener('hashchange', parseHashOrDefault);
+
+  function getUniqueList(mode) {
+    if (mode === 'teacher') {
+      const set = new Set();
+      rawData.forEach(item => {
+        if (Array.isArray(item.teachers_list)) {
+          item.teachers_list.forEach(t => set.add(t));
+        } else if (item.teacher) {
+          item.teacher.split('/').forEach(t => set.add(t.trim()));
+        }
+      });
+      return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, 'uk'));
+    }
+    const key = mode === 'group' ? 'group' : 'room';
+    return [...new Set(rawData.map(i => (i[key] || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'uk'));
+  }
+
+  function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('sidebarFilter').value = '';
+    const list = getUniqueList(mode);
+    currentValue = list[0] || '';
+    updateHash();
+    syncUI();
+  }
+
+  function selectEntity(val) {
+    currentValue = val;
+    updateHash();
+    syncUI();
+  }
+
+  function setWeek(w) {
+    currentWeek = w;
+    document.querySelectorAll('.week-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.week) === w));
+    document.getElementById('weekLabel').textContent = w === 1 ? '1-й (непарний) тиждень' : '2-й (парний) тиждень';
+    renderGrid();
+  }
+
+  function updateHash() {
+    if (currentValue) {
+      history.replaceState(null, '', `#/${currentMode}/${encodeURIComponent(currentValue)}`);
+    }
+  }
+
+  function syncUI() {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
+    renderSidebar();
+    renderGrid();
+  }
+
+  function renderSidebar() {
+    const filter = document.getElementById('sidebarFilter').value.toLowerCase().trim();
+    const all = getUniqueList(currentMode);
+    const filtered = all.filter(item => item.toLowerCase().includes(filter));
+
+    const titles = { group: 'Група', teacher: 'Викладач', room: 'Аудиторія' };
+    document.getElementById('listLabel').textContent = `${titles[currentMode]} (${all.length})`;
+
+    const container = document.getElementById('entityList');
+    container.innerHTML = filtered.map(item => `
+      <div class="entity-item ${item === currentValue ? 'active' : ''}" onclick="selectEntity('${item.replace(/'/g, "\\'")}')">
+        ${item}
+      </div>
+    `).join('');
+  }
+
+  function getCardClass(type) {
+    const t = (type || '').toLowerCase();
+    if (t.includes('практ') || t.includes('семін')) return 'prac';
+    if (t.includes('лаб')) return 'lab';
+    return 'lec';
+  }
+
+  function matchesWeek(itemWeek) {
+    if (!itemWeek) return true;
+    const w = String(itemWeek).toLowerCase();
+    if (w.includes('обидва') || w.includes('щотиж') || w === '0' || w === '1,2') return true;
+    if (currentWeek === 1) return w.includes('1') || w.includes('непар') || w.includes('чисель');
+    if (currentWeek === 2) return w.includes('2') || w.includes('парн') || w.includes('знамен');
+    return true;
+  }
+
+  function matchesEntity(item) {
+    if (currentMode === 'teacher') {
+      if (Array.isArray(item.teachers_list)) return item.teachers_list.includes(currentValue);
+      return (item.teacher || '').includes(currentValue);
+    }
+    const key = currentMode === 'group' ? 'group' : 'room';
+    return (item[key] || '').trim() === currentValue;
+  }
+
+  function renderGrid() {
+    const titles = { group: 'Група', teacher: 'Викладач', room: 'Аудиторія' };
+    document.getElementById('currentHeader').textContent = currentValue ? `${titles[currentMode]}: ${currentValue}` : 'Розклад занять';
+
+    const globalQ = document.getElementById('globalSearch').value.toLowerCase().trim();
+
+    const filteredLessons = rawData.filter(item => {
+      if (!matchesEntity(item)) return false;
+      if (!matchesWeek(item.week)) return false;
+      if (globalQ) {
+        const blob = `${item.subject} ${item.teacher} ${item.group} ${item.room}`.toLowerCase();
+        if (!blob.includes(globalQ)) return false;
+      }
+      return true;
+    });
+
+    const tbody = document.getElementById('scheduleBody');
+    let html = '';
+
+    for (let pair = 1; pair <= 6; pair++) {
+      html += `<tr>
+        <td class="pair-cell">
+          <div class="pair-num">${pair}</div>
+          <div class="pair-time">${TIMES[pair] || ''}</div>
+        </td>`;
+
+      for (const day of DAYS) {
+        const targetDayPrefix = normalizeDay(day).slice(0, 4);
+        const cellLessons = filteredLessons.filter(l =>
+          Number(l.period) === pair &&
+          normalizeDay(l.day).startsWith(targetDayPrefix)
+        );
+
+        html += `<td>${cellLessons.map(l => {
+          const cls = getCardClass(l.type);
+          let linksHtml = '';
+          if (currentMode === 'group') {
+            const list = Array.isArray(l.teachers_list) ? l.teachers_list : (l.teacher ? [l.teacher] : []);
+            linksHtml = list.map(t => `<span class="card-meta" onclick="jumpTo('teacher', '${t.replace(/'/g, "\\'")}')">${t}</span>`).join('');
+          } else if (l.group) {
+            linksHtml = `<span class="card-meta" onclick="jumpTo('group', '${l.group.replace(/'/g, "\\'")}')">${l.group}</span>`;
+          }
+
+          return `
+            <div class="card ${cls}">
+              <div class="card-type">${l.type || 'Заняття'}</div>
+              <div class="card-subj">${l.subject || 'Без назви'}</div>
+              <div>${linksHtml}</div>
+              <div class="card-sub">${currentMode !== 'room' && l.room ? `Ауд. ${l.room}` : ''} ${currentMode === 'room' && l.teacher ? l.teacher : ''}</div>
+            </div>
+          `;
+        }).join('')}</td>`;
+      }
+      html += `</tr>`;
+    }
+
+    tbody.innerHTML = html;
+  }
+
+  function jumpTo(mode, val) {
+    currentMode = mode;
+    currentValue = val;
+    updateHash();
+    syncUI();
+  }
+
+  init();
+</script>
+</body>
+</html>
