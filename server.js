@@ -23,11 +23,14 @@ app.get('/', (req, res) => {
 });
 
 // ==========================================
-// КОНФІГУРАЦІЯ МОДЕЛЕЙ
+// КОНФІГУРАЦІЯ МОДЕЛЕЙ ТА SUPABASE
 // ==========================================
 const OLLAMA_BASE = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
 const CHAT_MODEL = process.env.MODEL_NAME || 'qwen2.5:7b';
 const VISION_MODEL = process.env.VISION_MODEL || 'moondream';
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
 const openai = new OpenAI({
   baseURL: OLLAMA_BASE.endsWith('/v1') ? OLLAMA_BASE : `${OLLAMA_BASE}/v1`,
@@ -35,15 +38,40 @@ const openai = new OpenAI({
 });
 
 // ==========================================
-// ШАР 1: OBSERVABILITY / TRACES
+// ШАР 1: OBSERVABILITY / TRACES (Локально + Supabase)
 // ==========================================
 const tracesPath = path.join(__dirname, 'traces.json');
 if (!fs.existsSync(tracesPath)) {
   fs.writeFileSync(tracesPath, '[]', 'utf-8');
 }
 
+async function logToSupabase(payload) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/assistant_logs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('[Supabase Log Error]:', res.status, errText);
+    }
+  } catch (e) {
+    console.error('[Supabase Network Error]:', e.message);
+  }
+}
+
 function recordTrace({ query, entities = null, layerHit, startTime, status, reply }) {
   const latency = Date.now() - startTime;
+  const cleanReply = reply ? reply.substring(0, 2000) : '';
+
+  // 1. Локальний запис у traces.json (резерв)
   try {
     const traces = JSON.parse(fs.readFileSync(tracesPath, 'utf-8') || '[]');
     traces.unshift({
@@ -54,12 +82,23 @@ function recordTrace({ query, entities = null, layerHit, startTime, status, repl
       layer_hit: layerHit,
       latency_ms: latency,
       status,
-      reply: reply ? reply.substring(0, 500) : '',
+      reply: cleanReply.substring(0, 500),
     });
     fs.writeFileSync(tracesPath, JSON.stringify(traces.slice(0, 100), null, 2), 'utf-8');
   } catch (e) {
-    console.error('[Trace Error]:', e.message);
+    console.error('[Local Trace Error]:', e.message);
   }
+
+  // 2. Асинхронне відправлення в Supabase
+  logToSupabase({
+    query,
+    reply: cleanReply,
+    layer_hit: layerHit,
+    entities: entities || {},
+    latency_ms: latency,
+    status,
+  });
+
   console.log(`[TRACE] [${layerHit}] [${latency}ms] Status: ${status}`);
 }
 
@@ -128,7 +167,7 @@ try {
   const mergedTeachers = { ...teachersDirectory, ...(knowledgeBase.teachers || {}) };
   knowledgeBase.teachers = mergedTeachers;
 
-  console.log(`[Ініціалізація] Записів розкладу: ${scheduleData.length} | Викладачів у базі: ${Object.keys(mergedTeachers).length}`);
+  console.log(`[Ініціалізація] Записів розкладу: ${scheduleData.length} | Викладачів у базі: ${Object.keys(mergedTeachers).length} | Supabase: ${SUPABASE_URL ? 'Підключено' : 'Вимкнено'}`);
 } catch (err) {
   console.error('[Помилка] Збій читання JSON-файлів:', err.message);
 }
@@ -223,7 +262,6 @@ function extractEntities(userQuery) {
   if (q.includes('фесів') || q.includes('феськ')) {
     teacher = 'Фесів';
   } else {
-    // 1. Пошук по об'єднаному словнику викладачів (з кафедр + KB)
     const teacherKeys = Object.keys(knowledgeBase.teachers || {});
     for (const key of teacherKeys) {
       const surname = key.split(/[\s.]+/)[0];
@@ -234,7 +272,6 @@ function extractEntities(userQuery) {
       }
     }
 
-    // 2. Пошук напряму по scheduleData
     if (!teacher && Array.isArray(scheduleData)) {
       for (const item of scheduleData) {
         if (!item.teacher) continue;
@@ -248,7 +285,6 @@ function extractEntities(userQuery) {
       }
     }
 
-    // 3. Якщо викладача ще немає в локальних JSON — беремо ймовірне прізвище із запиту "Хто такий [Прізвище]"
     if (!teacher) {
       const bioMatch = userQuery.match(/(?:хто такий|хто така|хто це|про викладача|інформація про)\s+([А-ЯІЇЄҐ][а-яіїєґ'’\-]{2,})/i);
       if (bioMatch && bioMatch[1]) {
@@ -283,8 +319,6 @@ function searchSchedule(query, history = []) {
   const entities = extractEntities(query);
   const q = normalize(query);
 
-  // Якщо в поточному запиті не названо викладача чи групу (наприклад, "які в нього пари?", "а в середу?"),
-  // підтягуємо їх з попередніх 4 повідомлень діалогу (history)
   const isScheduleRelated =
     entities.day ||
     q.includes('розклад') ||
@@ -506,7 +540,7 @@ async function handleAssistantRequest(req, res) {
     return res.end(direct);
   }
 
-  // 4. RAG Search & Live HTTP Crawler (з урахуванням історії чату)
+  // 4. RAG Search & Live HTTP Crawler
   const { results: matchedClasses, entities, exactDayEmpty } = searchSchedule(message, history);
   const hasExplicitIntent = entities && (entities.teacher || entities.group || entities.day);
   const qNorm = normalize(message);
@@ -535,8 +569,6 @@ async function handleAssistantRequest(req, res) {
 
   if (isBioQuery) {
     const stem = getSurnameStem(entities.teacher.split(/[\s.]+/)[0]);
-
-    // Робимо LIVE HTTP-запит по дереву сайту ЧНУ в реальному часі
     const liveSiteData = await fetchLiveTeacherFromSite(stem);
 
     const allTeacherClasses = scheduleData.filter((item) => matchTeacherInRecord(item.teacher, entities.teacher));
@@ -692,7 +724,27 @@ ${scheduleContext}`;
 // ==========================================
 // API АНАЛІТИКИ ТА HTTP-ДЕРЕВА РЕСУРСІВ
 // ==========================================
-app.get('/api/analytics', (req, res) => {
+app.get('/api/analytics', async (req, res) => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/assistant_logs?select=*&order=created_at.desc&limit=50`,
+        {
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+          },
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        return res.json(data);
+      }
+    } catch (e) {
+      console.error('[Analytics Fetch Error]:', e.message);
+    }
+  }
+
   try {
     const rows = JSON.parse(fs.readFileSync(tracesPath, 'utf-8') || '[]').slice(0, 50);
     res.json(rows);
